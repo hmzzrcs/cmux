@@ -15,6 +15,7 @@
 package cmux
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -189,7 +190,7 @@ func (m *cMux) serve(c net.Conn, donec <-chan struct{}, wg *sync.WaitGroup) {
 	}
 	for _, sl := range m.sls {
 		for _, s := range sl.ss {
-			matched := s(muc.Conn, muc.startSniffing())
+			matched := s(muc, muc.startSniffing())
 			if matched {
 				muc.doneSniffing()
 				if m.readTimeout > noTimeout {
@@ -275,8 +276,30 @@ type MuxConn struct {
 	net.Conn
 	buf bufferedReader
 }
+type MuxConnTSL struct {
+	MuxConn
+	connTLSer
+}
+type connTLSer interface {
+	Handshake() error
+	ConnectionState() tls.ConnectionState
+}
+type muxConn interface {
+	startSniffing() io.Reader
+	doneSniffing()
+	net.Conn
+}
 
-func newMuxConn(c net.Conn) *MuxConn {
+func newMuxConn(c net.Conn) muxConn {
+	if tlsConn, ok := c.(connTLSer); ok {
+		return &MuxConnTSL{
+			MuxConn: MuxConn{
+				Conn: c,
+				buf:  bufferedReader{source: c},
+			},
+			connTLSer: tlsConn,
+		}
+	}
 	return &MuxConn{
 		Conn: c,
 		buf:  bufferedReader{source: c},
